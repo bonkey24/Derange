@@ -1,0 +1,10 @@
+db.sqlite3
+__pycache__/
+*.pyc
+*.py[cod]
+.pytest_cache/
+.venv*/
+venv/
+.env
+seating/data/*.local.*
+

@@ -21,6 +21,10 @@ local_settings.py
 staticfiles/
 media/
 
+# Local data files
+seating/data/*.local.txt
+seating/data/*.local.csv
+
 # Environment files (secrets)
 .env
 .env.local

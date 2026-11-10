@@ -411,11 +411,13 @@ def train_risk_model_api(request):
                             'academic_similarity_score': feat.get('academic_similarity_score', 0.5),
                         }
 
-    # Resolve real roster path if requested
+    # Resolve real roster path if requested (prefers local unmasked roster if present)
     roster_csv_path = None
     if use_real_roster:
         app_dir = os.path.dirname(os.path.abspath(__file__))
-        roster_csv_path = os.path.join(app_dir, 'data', 'students_anonymized.csv')
+        local_roster = os.path.join(app_dir, 'data', 'students_roster.local.csv')
+        fallback_roster = os.path.join(app_dir, 'data', 'students_anonymized.csv')
+        roster_csv_path = local_roster if os.path.exists(local_roster) else fallback_roster
 
     # 1. Generate synthetic tabular dataset for training the classifier
     simulated_data = ml_risk_model.generate_simulated_data(num_pairs=num_pairs)

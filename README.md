@@ -72,11 +72,16 @@ the underlying score.
 
 ```
 Derange/
+├── .env.example
 ├── .gitignore
+├── docker-compose.yml
 ├── package.json               # Root dev runner script (concurrently)
 ├── README.md
 ├── backend/                   # Django + Django REST Framework
+│   ├── .dockerignore
 │   ├── .env.example
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh
 │   ├── requirements.txt       # Backend dependencies pinned
 │   ├── pytest.ini
 │   ├── manage.py
@@ -93,7 +98,10 @@ Derange/
 │       ├── models.py / views.py / serializers.py / urls.py
 │       └── tests/             # Unit tests for combinatorial & seating engines
 └── frontend/                  # React + Vite + Tailwind CSS
+    ├── .dockerignore
     ├── .env.example
+    ├── Dockerfile
+    ├── nginx.conf
     ├── package.json
     ├── vite.config.js
     └── src/
@@ -108,7 +116,8 @@ Derange/
 - **Math/ML engine:** Python, `sympy`, `numpy`, `pandas`, `scikit-learn`
 - **Backend:** Django, Django REST Framework, SQLite (dev)
 - **Frontend:** React, Vite, Tailwind CSS v4, Chart.js (`react-chartjs-2`), React Router
-- **Planned:** Docker, Kubernetes (for portfolio-stage deployment)
+- **Containers:** Docker, Docker Compose
+- **Planned:** Kubernetes (for portfolio-stage deployment)
 
 ## Environment Variables
 
@@ -174,6 +183,23 @@ cd backend
 python -m pytest -v
 ```
 
+## Run with Docker
+
+To build and run the entire stack (Django backend, React+Vite frontend via Nginx, and persistent SQLite database volume) with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://127.0.0.1:8000 (e.g. `http://127.0.0.1:8000/api/rooms/`)
+
+To stop the containers and clean up networks:
+
+```bash
+docker compose down
+```
+
 ## Key API endpoints
 
 | Endpoint | Purpose |
@@ -196,11 +222,15 @@ before use, except for a small number of names the author chose to keep
 personally, with an explicit runtime safeguard (`PROTECTED_REAL_NAMES`)
 preventing any of those names from ever appearing in a flagged ML output.
 
+### Local data
+
+The committed roster is masked (`students_anonymized.csv`). To use real roster data locally, create `protected_names.local.txt` and `students_roster.local.csv` in `backend/seating/data/` (both are gitignored). The backend automatically detects and prefers the local unmasked roster and protected names files when present, falling back to the masked committed roster otherwise.
+
 ## Status
 
 Core math engine, backend API, frontend UI, and ML provenance system are
-functional and tested end-to-end. Docker and Kubernetes deployment are
-planned as a post-submission extension.
+functional and tested end-to-end. Docker containerization is complete;
+Kubernetes deployment is planned as a post-submission extension.
 
 ---
 

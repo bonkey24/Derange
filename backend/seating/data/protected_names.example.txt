@@ -1,0 +1,3 @@
+# one real name per line
+# copy to protected_names.local.txt
+

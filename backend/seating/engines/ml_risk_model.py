@@ -53,16 +53,39 @@ logger = logging.getLogger(__name__)
 # Any student whose name matches an entry in this set will be filtered OUT
 # of high-risk conflict predictions to protect personal privacy and ensure
 # non-anonymized students are never publicly flagged in disciplinary outputs.
-PROTECTED_REAL_NAMES = {
-    "ARBAZ MANZOOR",
-    "ARIJIT BHOWMICK",
-    "ARUSH TRIPATHI",
-    "AYAN MONDAL",
-    "AYUSH V NAIR",
-    "DAKSH JANGIR",
-    "DEBRAJ DE",
-    "KRISH",
-}
+PROTECTED_REAL_NAMES = set()
+
+def _load_protected_real_names():
+    """
+    Populate PROTECTED_REAL_NAMES at import time from, in this order:
+      (a) seating/data/protected_names.local.txt if it exists
+      (b) comma-separated env var PROTECTED_REAL_NAMES if set
+    Uses the same normalization (strip whitespace, uppercase) as the exclusion filter.
+    If neither exists, the set stays empty.
+    """
+    names = set()
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_path = os.path.join(app_dir, 'data', 'protected_names.local.txt')
+    if os.path.isfile(local_path):
+        try:
+            with open(local_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    c = line.strip()
+                    if c and not c.startswith('#'):
+                        names.add(c)
+                        names.add(c.upper())
+        except Exception as exc:
+            logger.warning(f"Failed to read protected_names.local.txt: {exc}")
+    elif 'PROTECTED_REAL_NAMES' in os.environ:
+        raw_env = os.environ.get('PROTECTED_REAL_NAMES', '')
+        for part in raw_env.split(','):
+            c = part.strip()
+            if c:
+                names.add(c)
+                names.add(c.upper())
+    return names
+
+PROTECTED_REAL_NAMES.update(_load_protected_real_names())
 
 
 # =======================================================================
@@ -151,7 +174,7 @@ def validate_roster_membership(student_list, roster):
 
 def _extract_usn_number(usn_str):
     """
-    Extract trailing integer from a USN string (e.g., '25BTRA0005' -> 5, 'S12' -> 12).
+    Extract trailing integer from a USN string (e.g., 'STU0005' -> 5, 'S12' -> 12).
     Returns None if no numeric suffix can be parsed.
     """
     if not usn_str or not isinstance(usn_str, str):
@@ -165,20 +188,42 @@ def _extract_usn_number(usn_str):
     return None
 
 
-def load_roster(csv_path):
+def get_default_roster_path():
+    """
+    Returns the preferred roster path:
+    Prefers seating/data/students_roster.local.csv when it exists,
+    falling back to students_anonymized.csv otherwise.
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(os.path.dirname(current_dir), 'data')
+    local_path = os.path.join(data_dir, 'students_roster.local.csv')
+    fallback_path = os.path.join(data_dir, 'students_anonymized.csv')
+    return local_path if os.path.exists(local_path) else fallback_path
+
+
+def load_roster(csv_path=None):
     """
     Read the student roster CSV containing USN and Name columns.
+    Prefers students_roster.local.csv if it exists and falls back to students_anonymized.csv.
 
     Parameters
     ----------
-    csv_path : str
+    csv_path : str, optional
         Path to the CSV file (must have 'USN' and 'Name' columns).
+        Defaults to get_default_roster_path().
 
     Returns
     -------
     Roster (dict-like)
         Mapping from USN -> Name, with attributes .usn_numbers and .max_gap.
     """
+    if csv_path is None:
+        csv_path = get_default_roster_path()
+    elif os.path.basename(csv_path) == 'students_anonymized.csv':
+        local_candidate = os.path.join(os.path.dirname(csv_path), 'students_roster.local.csv')
+        if os.path.exists(local_candidate):
+            csv_path = local_candidate
+
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Roster CSV file not found at: {csv_path}")
 
@@ -469,7 +514,7 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
     model : RandomForestClassifier
         Trained model from train_risk_model().
     student_list : list of str
-        Student identifiers (e.g. ["25BTRA0005", "25BTRA0006", ...]).
+        Student identifiers (e.g. ["STU0005", "STU0006", ...]).
     threshold : float
         Probability cutoff. Pairs with P(conflict) >= threshold are flagged.
     student_features : dict, optional
@@ -715,32 +760,33 @@ if __name__ == "__main__":
     print(f"      Flagged pairs: {simulated_results}")
     print(f"      Feature Sources: {simulated_results.feature_sources}")
 
-    # -- Step 4: Run inference on REAL class roster CSV ----------------------
-    print("\n[4/4] Running inference on REAL class roster CSV with proximity scoring...")
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    roster_path = os.path.join(os.path.dirname(current_dir), 'data', 'students_anonymized.csv')
+    # -- Step 4: Run inference on class roster CSV ----------------------
+    print("\n[4/4] Running inference on class roster CSV with proximity scoring...")
+    roster_path = get_default_roster_path()
 
     if os.path.exists(roster_path):
         roster_data = load_roster(roster_path)
-        print(f"      Loaded real roster: {len(roster_data)} students, max USN gap = {roster_data.max_gap}")
+        print(f"      Loaded roster: {len(roster_data)} students, max USN gap = {roster_data.max_gap}")
 
-        # Sample test cohort using actual USNs from the CSV
-        valid_usns = [
-            "25BTRA0005",  # ARBAZ MANZOOR
-            "25BTRA0006",  # ARIJIT BHOWMICK (adjacent to 0005 -> high proximity 0.9825)
-            "25BTRA0007",  # ARUSH TRIPATHI (close to 0005/0006)
-            "25BTRA0011",  # DAKSH JANGIR
-            "25BTRA0050",  # Student_050 (far away -> low proximity)
-        ]
+        # Sample test cohort using USNs from the CSV
+        usn_by_num = {_extract_usn_number(k): k for k in roster_data.keys()}
+        keys_sorted = sorted(roster_data.keys(), key=lambda k: _extract_usn_number(k) or 0)
+        usn_0005 = usn_by_num.get(5, keys_sorted[4] if len(keys_sorted) > 4 else keys_sorted[0])
+        usn_0006 = usn_by_num.get(6, keys_sorted[5] if len(keys_sorted) > 5 else keys_sorted[0])
+        usn_0007 = usn_by_num.get(7, keys_sorted[6] if len(keys_sorted) > 6 else keys_sorted[0])
+        usn_0011 = usn_by_num.get(11, keys_sorted[10] if len(keys_sorted) > 10 else keys_sorted[0])
+        usn_0050 = usn_by_num.get(50, keys_sorted[-1])
+
+        valid_usns = [usn_0005, usn_0006, usn_0007, usn_0011, usn_0050]
 
         print(f"      Evaluating sample cohort: {valid_usns}")
         # Test proximity calculation directly
-        prox_adjacent = compute_roll_proximity("25BTRA0005", "25BTRA0006", roster_data)
-        prox_distant = compute_roll_proximity("25BTRA0005", "25BTRA0050", roster_data)
-        print(f"      Proximity (25BTRA0005 <-> 25BTRA0006, adjacent): {prox_adjacent}")
-        print(f"      Proximity (25BTRA0005 <-> 25BTRA0050, distant):  {prox_distant}")
+        prox_adjacent = compute_roll_proximity(usn_0005, usn_0006, roster_data)
+        prox_distant = compute_roll_proximity(usn_0005, usn_0050, roster_data)
+        print(f"      Proximity ({usn_0005} <-> {usn_0006}, adjacent): {prox_adjacent}")
+        print(f"      Proximity ({usn_0005} <-> {usn_0050}, distant):  {prox_distant}")
 
-        # Test inference with real roster
+        # Test inference with roster
         real_results = get_high_risk_pairs(
             model,
             valid_usns,
@@ -752,12 +798,13 @@ if __name__ == "__main__":
 
         # -- Step 5: Test Roster Validation & Mismatch Handling -------------------
         print("\n--- Testing Roster Membership Validation & Guardrails ---")
-        test_mismatched = ["25BTRA0005", "25BTRAO005", "S1", "25BTRA0006"]
+        test_typo = usn_0005[:-4] + "O" + usn_0005[-3:]
+        test_mismatched = [usn_0005, test_typo, "S1", usn_0006]
         matched, unmatched = validate_roster_membership(test_mismatched, roster_data)
         print(f"      Input test IDs: {test_mismatched}")
         print(f"      Matched IDs:    {matched}")
         print(f"      Unmatched IDs:  {unmatched}")
-        assert unmatched == ["25BTRAO005", "S1"], f"Unexpected unmatched: {unmatched}"
+        assert unmatched == [test_typo, "S1"], f"Unexpected unmatched: {unmatched}"
 
         # 5a. Strict check raises RosterMismatchError
         try:
@@ -771,10 +818,10 @@ if __name__ == "__main__":
         print(f"      Lenient mode (strict_roster_check=False) succeeded. Flagged pairs: {lenient_results}")
 
         # -- Safeguard verification demo --
-        print("\n--- Testing Privacy Safeguard on Non-Anonymized Names ---")
-        test_protected_name = "ARBAZ MANZOOR"
+        print("\n--- Testing Privacy Safeguard on Protected Names ---")
+        test_protected_name = roster_data.get(usn_0005, "Student_005")
         PROTECTED_REAL_NAMES.add(test_protected_name)
-        print(f"      Added '{test_protected_name}' to PROTECTED_REAL_NAMES.")
+        print("      Added test protected name to PROTECTED_REAL_NAMES.")
 
         filtered_results = get_high_risk_pairs(
             model,
@@ -784,12 +831,11 @@ if __name__ == "__main__":
         )
         print(f"      Pairs after safeguard filtering: {filtered_results}")
         for pair in filtered_results:
-            assert "25BTRA0005" not in pair, f"Safeguard violation: {pair} contains protected student!"
+            assert usn_0005 not in pair, f"Safeguard violation: {pair} contains protected student!"
         print("      Safeguard verification: PASSED! Zero protected names in output.")
 
-        # Reset safeguard set as requested
-        PROTECTED_REAL_NAMES.clear()
-        print("      PROTECTED_REAL_NAMES reset to empty set.")
+        # Reset safeguard set
+        PROTECTED_REAL_NAMES.discard(test_protected_name)
     else:
         print(f"      CSV not found at {roster_path}")
 
