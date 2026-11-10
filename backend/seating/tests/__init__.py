@@ -1,0 +1,1 @@
+# seating/tests package

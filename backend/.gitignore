@@ -1,0 +1,36 @@
+# Database
+db.sqlite3
+db.sqlite3-journal
+
+# Python bytecode / cache
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.venv_test/
+
+# Django
+*.log
+local_settings.py
+staticfiles/
+media/
+
+# Environment files (secrets)
+.env
+.env.local
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db

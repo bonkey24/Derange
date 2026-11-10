@@ -1,0 +1,26 @@
+# =============================================================================
+# Seating Project — Backend (Django) Requirements
+# =============================================================================
+# Pinned to exact versions confirmed working on 2026-09-12.
+# Install:  pip install -r requirements.txt
+# =============================================================================
+
+# Core framework
+Django==6.1.1
+djangorestframework==3.18.1
+django-cors-headers==4.9.0
+
+# ML / Data Science (used by seating.engines.ml_risk_model)
+scikit-learn==1.9.1
+numpy==2.5.2
+pandas==3.0.5
+
+# Symbolic math (used by seating.engines.generating_functions)
+sympy==1.14.0
+
+# Production WSGI server (container deployment)
+gunicorn==23.0.0
+
+# Testing
+pytest==9.1.1
+pytest-django==4.14.0
