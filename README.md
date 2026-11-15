@@ -222,16 +222,4 @@ Experiential Learning Project
 
 ---
 
-## Team
-
-| Member |
-|--------|
-| Arijit Bhowmick |
-| Ayan Mondal |
-| Debopriya Saha |
-| Debraj De |
-| Krish |
-
----
-
 *Built as a Discrete Mathematics course project (Modules I–III: Inclusion-Exclusion, Derangements, Rook Polynomials, Generating Functions), extended with a full-stack implementation and applied ML for portfolio purposes.*
