@@ -129,13 +129,14 @@ class Roster(dict):
 class RiskPairs(list):
     """
     List subclass for returning high-risk pairs while retaining
-    metadata about feature provenance (feature_sources) and the count
-    of pairs that had manually-entered real evidence.
+    metadata about feature provenance (feature_sources), the count
+    of pairs that had manually-entered real evidence, and optional pair_scores.
     """
-    def __init__(self, iterable=None, feature_sources=None, pairs_with_real_evidence=0):
+    def __init__(self, iterable=None, feature_sources=None, pairs_with_real_evidence=0, pair_scores=None):
         super().__init__(iterable or [])
         self.feature_sources = feature_sources or {}
         self.pairs_with_real_evidence = pairs_with_real_evidence
+        self.pair_scores = pair_scores or {}
 
 
 def validate_roster_membership(student_list, roster):
@@ -188,61 +189,73 @@ def _extract_usn_number(usn_str):
     return None
 
 
-def get_default_roster_path():
-    """
-    Returns the preferred roster path:
-    Prefers seating/data/students_roster.local.csv when it exists,
-    falling back to students_anonymized.csv otherwise.
-    """
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(os.path.dirname(current_dir), 'data')
-    local_path = os.path.join(data_dir, 'students_roster.local.csv')
-    fallback_path = os.path.join(data_dir, 'students_anonymized.csv')
-    return local_path if os.path.exists(local_path) else fallback_path
-
-
 def load_roster(csv_path=None):
     """
-    Read the student roster CSV containing USN and Name columns.
-    Prefers students_roster.local.csv if it exists and falls back to students_anonymized.csv.
+    Read student roster data containing USN and Name columns.
+    If csv_path is provided, reads that specific CSV file (case-insensitive headers).
+    If csv_path is None, loads all department rosters via load_all_rosters().
 
     Parameters
     ----------
     csv_path : str, optional
-        Path to the CSV file (must have 'USN' and 'Name' columns).
-        Defaults to get_default_roster_path().
+        Path to a specific CSV file. If None, uses load_all_rosters().
 
     Returns
     -------
     Roster (dict-like)
         Mapping from USN -> Name, with attributes .usn_numbers and .max_gap.
     """
-    if csv_path is None:
-        csv_path = get_default_roster_path()
-    elif os.path.basename(csv_path) == 'students_anonymized.csv':
-        local_candidate = os.path.join(os.path.dirname(csv_path), 'students_roster.local.csv')
-        if os.path.exists(local_candidate):
-            csv_path = local_candidate
-
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Roster CSV file not found at: {csv_path}")
-
     mapping = {}
     usn_numbers = {}
 
-    with open(csv_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            usn = row.get("USN", "").strip()
-            name = row.get("Name", "").strip()
-            if not usn:
-                continue
-            mapping[usn] = name
-            num = _extract_usn_number(usn)
-            if num is not None:
-                usn_numbers[usn] = num
-            else:
-                logger.warning(f"Could not parse trailing numeric suffix from USN '{usn}' in roster.")
+    if csv_path is not None:
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"Roster CSV file not found at: {csv_path}")
+
+        with open(csv_path, mode='r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.reader(f)
+            headers = next(reader, None)
+            if not headers:
+                return Roster(mapping={}, usn_numbers={}, min_usn=0, max_usn=1)
+
+            usn_idx = None
+            name_idx = None
+            for idx, h in enumerate(headers):
+                norm = h.strip().lower()
+                if norm in ('usn', 'usn number', 'roll no', 'roll_no', 'roll number', 'rollno', 'student_id') or 'usn' in norm:
+                    if usn_idx is None:
+                        usn_idx = idx
+                elif norm in ('name', 'student name', 'student_name', 'full name', 'fullname') or 'name' in norm:
+                    if name_idx is None:
+                        name_idx = idx
+
+            if usn_idx is None:
+                usn_idx = 0
+            if name_idx is None:
+                name_idx = 1 if len(headers) > 1 else 0
+
+            for row in reader:
+                if not row or not any(cell and cell.strip() for cell in row):
+                    continue
+                usn = row[usn_idx].strip() if usn_idx < len(row) else ''
+                name = row[name_idx].strip() if name_idx < len(row) else ''
+                if not usn:
+                    continue
+                mapping[usn] = name
+                num = _extract_usn_number(usn)
+                if num is not None:
+                    usn_numbers[usn] = num
+    else:
+        from seating.rosters import load_all_rosters
+        rosters_dict, _ = load_all_rosters()
+        for r in rosters_dict.values():
+            for s in r.get('students', []):
+                usn = s['usn']
+                name = s['name']
+                mapping[usn] = name
+                num = _extract_usn_number(usn)
+                if num is not None:
+                    usn_numbers[usn] = num
 
     if usn_numbers:
         min_num = min(usn_numbers.values())
@@ -476,7 +489,16 @@ def train_risk_model(df, test_size=0.2, random_state=42):
 #  3. INFERENCE & INTEGRATION
 # =======================================================================
 
-def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=None, roster_csv_path=None, strict_roster_check=True):
+def get_high_risk_pairs(
+    model,
+    student_list,
+    threshold=0.75,
+    student_features=None,
+    roster_csv_path=None,
+    strict_roster_check=True,
+    use_real_roster=False,
+    roster=None,
+):
     """
     Score every unique pair from `student_list` and return those whose
     predicted conflict probability exceeds `threshold`.
@@ -485,9 +507,9 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
     FEATURE TRANSPARENCY & DATA PROVENANCE:
     ---------------------------------------
     - roll_number_proximity:
-      When `roster_csv_path` is provided, this feature is computed from REAL
-      student USNs in the roster CSV.
-      If `roster_csv_path` is omitted, it falls back to simulated/neutral values.
+      When `roster_csv_path` is provided, or `use_real_roster` is True, or `roster`
+      is supplied, this feature is computed from REAL student USNs in department rosters.
+      If omitted, it falls back to simulated/neutral values.
 
     - past_incidents_together & academic_similarity_score:
       Derived from `student_features` if provided; otherwise falls back to
@@ -514,16 +536,20 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
     model : RandomForestClassifier
         Trained model from train_risk_model().
     student_list : list of str
-        Student identifiers (e.g. ["STU0005", "STU0006", ...]).
+        Student identifiers (e.g. ["25BTRA0001", "25BTRA0002", ...]).
     threshold : float
         Probability cutoff. Pairs with P(conflict) >= threshold are flagged.
     student_features : dict, optional
         Mapping of student pairs to feature dicts, keyed by frozenset({student_a, student_b}).
     roster_csv_path : str, optional
-        Path to students_anonymized.csv for computing REAL roll proximity.
+        Path to a roster CSV file for computing REAL roll proximity (used by tests).
     strict_roster_check : bool, optional
         If True (default), raises RosterMismatchError if any student_list ID is
         missing from the roster. If False, logs a warning and uses 0.5 for unmatched pairs.
+    use_real_roster : bool, optional
+        If True, loads all department rosters via load_all_rosters().
+    roster : Roster or dict, optional
+        Pre-loaded Roster object.
 
     Returns
     -------
@@ -532,32 +558,32 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
         The list object also includes a `.feature_sources` attribute reporting
         whether each feature was 'real' or 'simulated'.
     """
+    roster_active = roster_csv_path is not None or use_real_roster or roster is not None
     all_pairs = list(combinations(student_list, 2))
     if not all_pairs:
         return RiskPairs([], feature_sources={
-            "roll_number_proximity": "real" if roster_csv_path else "simulated",
+            "roll_number_proximity": "real" if roster_active else "simulated",
             "past_incidents_together": "simulated",
             "shared_classes_count": "simulated",
             "academic_similarity_score": "simulated",
         }, pairs_with_real_evidence=0)
 
-    # 1. Load real roster if CSV path provided
-    roster = None
+    # 1. Load real roster if requested or provided
     unmatched_ids = []
-    if roster_csv_path:
+    if roster is None and (roster_csv_path or use_real_roster):
         try:
-            roster = load_roster(roster_csv_path)
-            logger.info(f"Loaded roster with {len(roster)} students from {roster_csv_path}.")
+            roster = load_roster(roster_csv_path if roster_csv_path else None)
+            logger.info(f"Loaded roster with {len(roster)} students.")
         except Exception as e:
-            logger.error(f"Failed to load roster from {roster_csv_path}: {e}")
-            warnings.warn(f"Failed to load roster from {roster_csv_path}: {e}", UserWarning, stacklevel=2)
+            logger.error(f"Failed to load roster: {e}")
+            warnings.warn(f"Failed to load roster: {e}", UserWarning, stacklevel=2)
 
-        if roster:
-            matched_ids, unmatched_ids = validate_roster_membership(student_list, roster)
-            if unmatched_ids:
-                if strict_roster_check:
-                    raise RosterMismatchError(unmatched_ids)
-                else:
+    if roster:
+        matched_ids, unmatched_ids = validate_roster_membership(student_list, roster)
+        if unmatched_ids:
+            if strict_roster_check:
+                raise RosterMismatchError(unmatched_ids)
+            else:
                     msg = (
                         f"The following student IDs do not match any USN in the roster CSV and "
                         f"cannot have a real roll_number_proximity computed: {unmatched_ids}. "
@@ -699,9 +725,12 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
 
     # 5. Filter by probability threshold
     candidate_pairs = []
+    pair_scores = {}
     for i, pair in enumerate(valid_pairs):
-        if probabilities[i] >= threshold:
+        prob = float(probabilities[i])
+        if prob >= threshold:
             candidate_pairs.append(pair)
+            pair_scores[frozenset(pair)] = prob
 
     # 6. Apply Real-Name Privacy Safeguard
     # Filter OUT any pair where either student's name is in PROTECTED_REAL_NAMES
@@ -729,7 +758,7 @@ def get_high_risk_pairs(model, student_list, threshold=0.75, student_features=No
         logger.info(msg)
         print(f"[ml_risk_model SAFEGUARD] {msg}")
 
-    return RiskPairs(high_risk_pairs, feature_sources=feature_sources, pairs_with_real_evidence=pairs_with_real_evidence)
+    return RiskPairs(high_risk_pairs, feature_sources=feature_sources, pairs_with_real_evidence=pairs_with_real_evidence, pair_scores=pair_scores)
 
 
 # =======================================================================

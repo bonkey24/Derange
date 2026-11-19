@@ -5,6 +5,7 @@
     "dev": "concurrently -n BACKEND,FRONTEND -c blue,green -k \"python backend/manage.py runserver\" \"npm --prefix frontend run dev\""
   },
   "devDependencies": {
-    "concurrently": "^9.0.0"
+    "concurrently": "^9.0.0",
+    "playwright": "^1.65.1"
   }
 }

@@ -32,14 +32,19 @@ export function RoomProvider({ children }) {
     }
   }, []);
 
-  const fetchStudents = useCallback(async () => {
+  const fetchStudents = useCallback(async (roomId) => {
+    const targetRoomId = roomId !== undefined ? roomId : activeRoom?.id;
+    if (!targetRoomId) {
+      setStudents([]);
+      return;
+    }
     try {
-      const res = await apiService.getStudents();
+      const res = await apiService.getStudents(targetRoomId);
       setStudents(res.data);
     } catch (err) {
       console.error('Failed to load students:', err);
     }
-  }, []);
+  }, [activeRoom?.id]);
 
   const setActiveRoom = (room) => {
     setActiveRoomState(room);
@@ -50,14 +55,23 @@ export function RoomProvider({ children }) {
     }
   };
 
+  // Re-fetch students whenever active room changes
+  useEffect(() => {
+    if (activeRoom?.id) {
+      fetchStudents(activeRoom.id);
+    } else {
+      setStudents([]);
+    }
+  }, [activeRoom?.id, fetchStudents]);
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchRooms(), fetchStudents()]);
+      await fetchRooms();
       setLoading(false);
     };
     init();
-  }, [fetchRooms, fetchStudents]);
+  }, [fetchRooms]);
 
   return (
     <RoomContext.Provider

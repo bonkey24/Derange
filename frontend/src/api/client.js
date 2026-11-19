@@ -16,7 +16,7 @@ export const apiService = {
   deleteRoom: (id) => api.delete(`/rooms/${id}/`),
 
   // Students
-  getStudents: () => api.get('/students/'),
+  getStudents: (roomId) => api.get('/students/', { params: roomId ? { room: roomId } : {} }),
   createStudent: (data) => api.post('/students/', data),
   updateStudent: (id, data) => api.patch(`/students/${id}/`, data),
   deleteStudent: (id) => api.delete(`/students/${id}/`),
@@ -40,6 +40,12 @@ export const apiService = {
 
   // Math explainer
   getMathExplainer: (roomId) => api.get(`/math-explainer/${roomId}/`),
+  getTinyProof: (roomId) => api.get(`/math-explainer/${roomId}/tiny-proof/`),
+
+  // Rosters
+  getRosters: () => api.get('/rosters/'),
+  getRosterDetail: (slug) => api.get(`/rosters/${slug}/`),
+  addRosterStudents: (roomId, data) => api.post(`/rooms/${roomId}/add-roster-students/`, data),
 };
 
 export default api;

@@ -37,17 +37,21 @@ class Room(models.Model):
 
 class Student(models.Model):
     """
-    An individual student.  roll_no is unique and serves as the student
-    identifier in the engine modules (e.g., "S1", "S2").
+    An individual student enrolled in a specific room.  roll_no is unique per room
+    and serves as the student identifier in the engine modules (e.g., "S1", "S2").
     """
+    room = models.ForeignKey(
+        Room, on_delete=models.CASCADE, related_name='students'
+    )
     name = models.CharField(max_length=100)
-    roll_no = models.CharField(max_length=20, unique=True)
+    roll_no = models.CharField(max_length=20)
 
     class Meta:
         ordering = ['roll_no']
+        unique_together = ('room', 'roll_no')
 
     def __str__(self):
-        return f"{self.roll_no} - {self.name}"
+        return f"{self.roll_no} - {self.name} ({self.room.name})"
 
 
 class ConstraintForbidden(models.Model):

@@ -280,7 +280,6 @@ export default function GenerateTab() {
                 students={students}
                 title={`Seating Chart: ${activeRoom.name}`}
               />
-              <MathExplainerPanel roomId={activeRoom.id} />
             </div>
           ) : (
             <div className="bg-white rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400">
@@ -290,6 +289,10 @@ export default function GenerateTab() {
                 Click <strong>"Generate Seating Chart"</strong> above to compute assignments using the combinatorial backtracking solver.
               </p>
             </div>
+          )}
+
+          {activeRoom && (
+            <MathExplainerPanel roomId={activeRoom.id} activeRoom={activeRoom} />
           )}
         </div>
 

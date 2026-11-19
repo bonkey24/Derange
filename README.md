@@ -87,7 +87,7 @@ A **Random Forest** classifier flags potentially high-risk student pairs, but th
 
 | Feature | Source |
 |---------|--------|
-| `roll_number_proximity` | **Real** — computed from the anonymized class roster CSV (real USN structure). |
+| `roll_number_proximity` | **Real** — computed from department class roster CSVs (real USN structure). |
 | `past_incidents_together` | **Simulated** by default; upgrades to **real** if manual evidence is supplied. |
 | `academic_similarity_score` | **Simulated** (no real transcript data). |
 | `shared_classes_count` | **Simulated** (all students share an identical subject list in this dataset). |
@@ -181,6 +181,9 @@ docker compose down
 | `/api/train-risk-model/` | POST | Train and score the ML risk model |
 | `/api/seating-results/<room_id>/` | GET | Retrieve past seating results for a room |
 | `/api/math-explainer/<room_id>/` | GET | Analytical breakdown (rook poly + I-E coefficients) |
+| `/api/rosters/` | GET | List department rosters and validation errors |
+| `/api/rosters/<slug>/` | GET | Retrieve department roster details and student list |
+| `/api/rooms/<room_id>/add-roster-students/` | POST | Add students from a department roster to a room |
 
 ---
 

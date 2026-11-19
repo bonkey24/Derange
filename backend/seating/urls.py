@@ -27,4 +27,10 @@ urlpatterns = [
     path('train-risk-model/', views.train_risk_model_api, name='train-risk-model'),
     path('seating-results/<int:room_id>/', views.seating_results_by_room, name='seating-results-by-room'),
     path('math-explainer/<int:room_id>/', views.math_explainer, name='math-explainer'),
+    path('math-explainer/<int:room_id>/tiny-proof/', views.tiny_proof_explainer, name='math-explainer-tiny-proof'),
+
+    # Department roster endpoints
+    path('rosters/', views.list_rosters, name='list-rosters'),
+    path('rosters/<slug:slug>/', views.get_roster_detail, name='get-roster-detail'),
+    path('rooms/<int:room_id>/add-roster-students/', views.add_roster_students_to_room, name='add-roster-students'),
 ]

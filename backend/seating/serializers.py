@@ -29,12 +29,15 @@ class RoomSerializer(serializers.ModelSerializer):
 
 class StudentSerializer(serializers.ModelSerializer):
     """
-    Serializer for student records. roll_no is unique and serves as
+    Serializer for student records. roll_no is unique per room and serves as
     the invariant key for mathematical engines.
     """
     class Meta:
         model = Student
-        fields = ['id', 'name', 'roll_no']
+        fields = ['id', 'room', 'name', 'roll_no']
+        extra_kwargs = {
+            'room': {'required': False}
+        }
 
 
 class ConstraintForbiddenSerializer(serializers.ModelSerializer):

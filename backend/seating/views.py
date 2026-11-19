@@ -25,7 +25,7 @@ Contains:
 import math
 import os
 
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -37,6 +37,7 @@ from .models import (
     ConstraintConflictPair,
     SeatingResult,
 )
+from .rosters import load_all_rosters
 from .serializers import (
     RoomSerializer,
     StudentSerializer,
@@ -53,6 +54,7 @@ from seating.engines import (
 from seating.engines.rook_polynomial import rook_polynomial
 from seating.engines.inclusion_exclusion import count_valid_arrangements_verbose
 from seating.engines.derangements import derangement_count_formula
+from seating.engines.brute_force_explainer import enumerate_arrangements
 
 
 # =======================================================================
@@ -70,9 +72,27 @@ class RoomViewSet(viewsets.ModelViewSet):
 class StudentViewSet(viewsets.ModelViewSet):
     """
     Standard CRUD viewset for Student entities.
+    Supports filtering by room: GET /api/students/?room=<id>
     """
-    queryset = Student.objects.all()
     serializer_class = StudentSerializer
+
+    def get_queryset(self):
+        queryset = Student.objects.all()
+        room_id = self.request.query_params.get('room')
+        if room_id:
+            queryset = queryset.filter(room_id=room_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        if 'room' in serializer.validated_data:
+            serializer.save()
+        else:
+            room_id = self.request.data.get('room') or self.request.query_params.get('room')
+            if room_id:
+                room = get_object_or_404(Room, id=room_id)
+                serializer.save(room=room)
+            else:
+                raise serializers.ValidationError({"room": "This field is required."})
 
 
 class ConstraintConflictPairViewSet(viewsets.ModelViewSet):
@@ -109,8 +129,8 @@ def _extract_solver_inputs(room, requested_students=None):
     if requested_students:
         students = list(requested_students)
     else:
-        # Default to all registered students in the database
-        students = list(Student.objects.values_list('roll_no', flat=True))
+        # Default to all registered students in this room
+        students = list(room.students.values_list('roll_no', flat=True))
 
     # 2. Individual forbidden seat constraints for this room (Layer 1)
     forbidden_qs = ConstraintForbidden.objects.filter(room=room).select_related('student')
@@ -319,7 +339,7 @@ def train_risk_model_api(request):
             "student_ids": ["S1", ...],// optional if room_id is provided
             "threshold": 0.75,         // optional, default 0.75
             "num_pairs": 1000,         // optional, default 1000 synthetic samples
-            "use_real_roster": true,   // optional, loads students_anonymized.csv for real proximity
+            "use_real_roster": true,   // optional, loads department rosters for real proximity
             "strict_roster_check": true,// optional, default true. If false, unmatched IDs fall back to 0.5 proximity
             "pair_features": {         // optional real metrics per student pair
                 "S1,S2": {
@@ -334,11 +354,11 @@ def train_risk_model_api(request):
     performs pairwise conflict risk scoring on the student cohort, and
     returns the flagged high-risk pairs without persisting the model to disk.
     If use_real_roster is true, roll_number_proximity is computed from real
-    student USNs in students_anonymized.csv.
+    student USNs in the department rosters.
 
     ROSTER VALIDATION & TRADE-OFF:
         - When strict_roster_check is true (default): Any student roll_no that
-          cannot be found in students_anonymized.csv immediately returns HTTP 400
+          cannot be found in the department rosters immediately returns HTTP 400
           with the list of unmatched student IDs.
         - When strict_roster_check is false: Unmatched student IDs do not fail
           the request; instead, pairs involving unmatched students fall back to
@@ -411,14 +431,6 @@ def train_risk_model_api(request):
                             'academic_similarity_score': feat.get('academic_similarity_score', 0.5),
                         }
 
-    # Resolve real roster path if requested (prefers local unmasked roster if present)
-    roster_csv_path = None
-    if use_real_roster:
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        local_roster = os.path.join(app_dir, 'data', 'students_roster.local.csv')
-        fallback_roster = os.path.join(app_dir, 'data', 'students_anonymized.csv')
-        roster_csv_path = local_roster if os.path.exists(local_roster) else fallback_roster
-
     # 1. Generate synthetic tabular dataset for training the classifier
     simulated_data = ml_risk_model.generate_simulated_data(num_pairs=num_pairs)
 
@@ -432,8 +444,8 @@ def train_risk_model_api(request):
             students,
             threshold=threshold,
             student_features=student_features,
-            roster_csv_path=roster_csv_path,
             strict_roster_check=strict_roster_check,
+            use_real_roster=use_real_roster,
         )
     except ml_risk_model.RosterMismatchError as exc:
         return Response(
@@ -441,7 +453,7 @@ def train_risk_model_api(request):
                 "error": "Roster mismatch: some student roll numbers don't match real USNs.",
                 "unmatched_student_ids": exc.unmatched_ids,
                 "hint": (
-                    "Set each Student's roll_no to match a real USN from students_anonymized.csv, "
+                    "Set each Student's roll_no to match a real USN from the department rosters, "
                     "or omit use_real_roster to use simulated proximity instead."
                 ),
             },
@@ -456,19 +468,40 @@ def train_risk_model_api(request):
     })
 
     pairs_with_real_evidence = getattr(high_risk_pairs, 'pairs_with_real_evidence', 0)
+    scores_map = getattr(high_risk_pairs, 'pair_scores', {})
+
+    feature_cols = [
+        "past_incidents_together",
+        "shared_classes_count",
+        "academic_similarity_score",
+        "roll_number_proximity",
+    ]
+    feature_importances = dict(zip(
+        feature_cols,
+        [round(float(imp), 4) for imp in trained_model.feature_importances_]
+    ))
+
+    # Build pairs list with score, sorted highest risk score first
+    pairs_list = []
+    for a, b in high_risk_pairs:
+        raw_score = scores_map.get(frozenset({a, b}), threshold)
+        pairs_list.append({
+            "student_a": a,
+            "student_b": b,
+            "score": round(float(raw_score), 2),
+        })
+    pairs_list.sort(key=lambda x: -x["score"])
 
     return Response(
         {
             "threshold": threshold,
             "total_students": len(students),
-            "high_risk_pairs": [
-                {"student_a": a, "student_b": b}
-                for a, b in high_risk_pairs
-            ],
+            "high_risk_pairs": pairs_list,
             "count": len(high_risk_pairs),
             "features_simulated": not use_real_roster and (student_features is None),
             "feature_sources": feature_sources,
             "pairs_with_real_evidence": pairs_with_real_evidence,
+            "feature_importances": feature_importances,
         },
         status=status.HTTP_200_OK,
     )
@@ -505,34 +538,45 @@ def math_explainer(request, room_id):
     INDIVIDUAL forbidden-seat constraints (Layer 1 only -- adjacency
     conflict pairs are not rook-polynomial-representable).
 
-    If the room has any past retest results, also includes derangement
-    count D(n) vs n! for comparison.
+    Provides theoretical statistics including D(n) derangements vs n!,
+    room geometry, and formatted string values for large integers.
     """
     room = get_object_or_404(Room, id=room_id)
 
     # Determine student roster (same logic as _extract_solver_inputs)
-    students = list(Student.objects.values_list('roll_no', flat=True))
+    students = list(room.students.values_list('roll_no', flat=True))
     n = len(students)
 
-    if n == 0:
-        return Response({
-            "room_id": room.id,
-            "n": 0,
-            "rook_polynomial_coefficients": [1],
-            "inclusion_exclusion_terms": [],
-            "total_valid_arrangements": 0,
-            "derangement_info": None,
-        })
-
-    # Build forbidden cells using the same pattern as _extract_solver_inputs:
-    # (roll_no, seat_index) pairs -- rook_polynomial/inclusion_exclusion
-    # treat these as (row, col) positions on the forbidden board.
     forbidden_qs = ConstraintForbidden.objects.filter(
         room=room
     ).select_related('student')
     forbidden_cells = [
         (item.student.roll_no, item.seat_index) for item in forbidden_qs
     ]
+    forbidden_seats = sorted(list(set(item.seat_index for item in forbidden_qs)))
+    forbidden_details = [
+        {"student": item.student.roll_no, "seat_index": item.seat_index}
+        for item in forbidden_qs
+    ]
+
+    if n == 0:
+        return Response({
+            "room_id": room.id,
+            "room_name": room.name,
+            "rows": room.rows,
+            "cols": room.cols,
+            "total_seats": room.total_seats,
+            "forbidden_seats": forbidden_seats,
+            "forbidden_details": forbidden_details,
+            "n": 0,
+            "n_factorial": 1,
+            "n_factorial_str": "1",
+            "rook_polynomial_coefficients": [1],
+            "inclusion_exclusion_terms": [],
+            "total_valid_arrangements": 0,
+            "total_valid_arrangements_str": "0",
+            "derangement_info": None,
+        })
 
     # Compute rook polynomial of the forbidden board
     rook_coeffs = rook_polynomial(forbidden_cells)
@@ -540,27 +584,261 @@ def math_explainer(request, room_id):
     # Compute inclusion-exclusion term breakdown
     total, terms = count_valid_arrangements_verbose(n, forbidden_cells)
 
+    formatted_terms = []
+    for t in terms:
+        t_copy = dict(t)
+        t_copy["factorial_term_str"] = str(t["factorial_term"])
+        t_copy["contribution_str"] = str(t["contribution"])
+        formatted_terms.append(t_copy)
+
     # Check whether this room has any retest results
     has_retest = SeatingResult.objects.filter(
         room=room, type='retest'
     ).exists()
 
-    derangement_info = None
-    if has_retest:
-        d_n = derangement_count_formula(n)
-        n_factorial = math.factorial(n)
-        derangement_info = {
-            "D_n": d_n,
-            "n_factorial": n_factorial,
-            "ratio": round(d_n / n_factorial, 6) if n_factorial > 0 else 0,
-        }
+    d_n = derangement_count_formula(n)
+    n_factorial = math.factorial(n)
+    ratio = round(d_n / n_factorial, 6) if n_factorial > 0 else 0
+    percentage = round((d_n / n_factorial) * 100, 2) if n_factorial > 0 else 0
+
+    derangement_info = {
+        "D_n": d_n,
+        "D_n_str": str(d_n),
+        "n_factorial": n_factorial,
+        "n_factorial_str": str(n_factorial),
+        "ratio": ratio,
+        "percentage": percentage,
+        "has_retest": has_retest,
+    }
 
     return Response({
         "room_id": room.id,
+        "room_name": room.name,
+        "rows": room.rows,
+        "cols": room.cols,
+        "total_seats": room.total_seats,
+        "forbidden_seats": forbidden_seats,
+        "forbidden_details": forbidden_details,
         "n": n,
+        "n_factorial": n_factorial,
+        "n_factorial_str": str(n_factorial),
         "rook_polynomial_coefficients": rook_coeffs,
-        "inclusion_exclusion_terms": terms,
+        "inclusion_exclusion_terms": formatted_terms,
         "total_valid_arrangements": total,
+        "total_valid_arrangements_str": str(total),
         "derangement_info": derangement_info,
     })
+
+
+@api_view(['GET'])
+def tiny_proof_explainer(request, room_id):
+    """
+    GET /api/math-explainer/<room_id>/tiny-proof/
+    Provides a brute-force permutation listing proof for small rooms (n <= 5)
+    or a built-in mini example for larger rooms.
+    Uses generic labels only (S1..Sn, Seat 1..n). Never exposes real student names.
+    """
+    room = get_object_or_404(Room, id=room_id)
+    students = list(room.students.values_list('roll_no', flat=True))
+    n = len(students)
+
+    if 1 <= n <= 5:
+        # Real room structure using generic labels
+        student_map = {roll: i for i, roll in enumerate(students)}
+        forbidden_qs = ConstraintForbidden.objects.filter(room=room).select_related('student')
+        forbidden_cells = []
+        for item in forbidden_qs:
+            if item.student.roll_no in student_map:
+                s_idx = student_map[item.student.roll_no]
+                # Map seat_index within the n available student seats
+                c_idx = item.seat_index if item.seat_index < n else (item.seat_index % n)
+                forbidden_cells.append((s_idx, c_idx))
+
+        seating_proof = enumerate_arrangements(n, forbidden_cells, mode='seating')
+        retest_proof = enumerate_arrangements(n, [], mode='retest')
+        retest_n3 = enumerate_arrangements(3, [], mode='retest') if n != 3 else retest_proof
+        retest_n4 = enumerate_arrangements(4, [], mode='retest') if n != 4 else retest_proof
+
+        return Response({
+            "room_id": room.id,
+            "room_name": room.name,
+            "room_students_count": n,
+            "is_mini_example": False,
+            "reason": None,
+            "seating": seating_proof,
+            "retest": retest_proof,
+            "retest_n3": retest_n3,
+            "retest_n4": retest_n4,
+        })
+    else:
+        # Fallback built-in mini example
+        reason = (
+            "your room is larger than 5 students, so here is the same idea on a small room"
+            if n > 5
+            else "your room currently has 0 students, so here is the same idea on a small room"
+        )
+        # Built-in mini example: n = 4 with 2 forbidden cells in different rows and columns
+        mini_seating = enumerate_arrangements(4, [(0, 0), (1, 1)], mode='seating')
+        # Derangement mode: n = 3 (D3 = 2) and n = 4 (D4 = 9)
+        mini_d3 = enumerate_arrangements(3, [], mode='retest')
+        mini_d4 = enumerate_arrangements(4, [], mode='retest')
+
+        return Response({
+            "room_id": room.id,
+            "room_name": room.name,
+            "room_students_count": n,
+            "is_mini_example": True,
+            "reason": reason,
+            "seating": mini_seating,
+            "retest": mini_d3,
+            "retest_n3": mini_d3,
+            "retest_n4": mini_d4,
+        })
+
+
+# =======================================================================
+# 7. Department Rosters Endpoints
+# =======================================================================
+
+@api_view(['GET'])
+def list_rosters(request):
+    """
+    GET /api/rosters/
+    Returns summary list of all department rosters with slug, department label,
+    student count, plus an errors list.
+    """
+    rosters_dict, errors = load_all_rosters()
+    roster_list = [
+        {
+            "slug": r["slug"],
+            "department": r["department"],
+            "count": r["count"],
+        }
+        for r in rosters_dict.values()
+    ]
+    return Response({
+        "rosters": roster_list,
+        "errors": errors,
+    })
+
+
+@api_view(['GET'])
+def get_roster_detail(request, slug):
+    """
+    GET /api/rosters/<slug>/
+    Returns:
+        { "department": "...", "students": [{ "usn": "...", "name": "..." }, ...] }
+    Returns 404 if unknown slug.
+    """
+    rosters_dict, _ = load_all_rosters()
+    if slug not in rosters_dict:
+        return Response(
+            {"error": f"Roster '{slug}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    roster = rosters_dict[slug]
+    return Response({
+        "department": roster["department"],
+        "students": roster["students"],
+    })
+
+
+@api_view(['POST'])
+def add_roster_students_to_room(request, room_id):
+    """
+    POST /api/rooms/<room_id>/add-roster-students/
+    Body:
+        { "slug": "cse-aidd", "usns": ["25BTRA0001", ...] }
+
+    Creates Student records using the roster name and USN.
+    Skips USNs already in the room.
+    Rejects unknown USNs with HTTP 400.
+    Returns HTTP 400 if room capacity (rows * cols) would be exceeded.
+    """
+    room = get_object_or_404(Room, id=room_id)
+    slug = request.data.get('slug')
+    usns = request.data.get('usns')
+
+    if not slug:
+        return Response(
+            {"error": "Field 'slug' is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not isinstance(usns, list):
+        return Response(
+            {"error": "Field 'usns' must be a list of USN strings."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    rosters_dict, _ = load_all_rosters()
+    if slug not in rosters_dict:
+        return Response(
+            {"error": f"Roster '{slug}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    roster = rosters_dict[slug]
+    roster_map = {s['usn']: s['name'] for s in roster['students']}
+
+    # Reject unknown USNs
+    unknown_usns = [u for u in usns if u not in roster_map]
+    if unknown_usns:
+        return Response(
+            {
+                "error": f"Unknown USN(s) for roster '{slug}': {unknown_usns}",
+                "unknown_usns": unknown_usns,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Deduplicate requested USNs while preserving order
+    unique_requested_usns = list(dict.fromkeys(usns))
+
+    # Identify USNs already created / present in DB for this room
+    existing_usns = set(
+        Student.objects.filter(room=room, roll_no__in=unique_requested_usns).values_list('roll_no', flat=True)
+    )
+
+    new_usns = [u for u in unique_requested_usns if u not in existing_usns]
+    skipped_usns = [u for u in unique_requested_usns if u in existing_usns]
+
+    # Capacity check: room capacity is rows * cols
+    room_capacity = room.rows * room.cols
+    current_students_count = room.students.count()
+
+    if current_students_count + len(new_usns) > room_capacity:
+        return Response(
+            {
+                "error": (
+                    f"Room capacity exceeded. Room '{room.name}' has capacity {room_capacity} "
+                    f"({room.rows}x{room.cols}). Current students: {current_students_count}, "
+                    f"attempting to add {len(new_usns)} new students."
+                ),
+                "room_capacity": room_capacity,
+                "current_students": current_students_count,
+                "attempted_to_add": len(new_usns),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    created_students = []
+    for u in new_usns:
+        student = Student.objects.create(
+            room=room,
+            roll_no=u,
+            name=roster_map[u],
+        )
+        created_students.append(student)
+
+    return Response(
+        {
+            "message": f"Successfully added {len(created_students)} student(s). Skipped {len(skipped_usns)} already present.",
+            "added_count": len(created_students),
+            "skipped_count": len(skipped_usns),
+            "added": [{"roll_no": s.roll_no, "name": s.name} for s in created_students],
+            "skipped": skipped_usns,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 

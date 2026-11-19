@@ -48,8 +48,18 @@ export default function RiskModelTab() {
     academicSimilarity: 0.5,
   });
 
-  // Chart data state
+  // Chart data state for sensitivity
   const [chartData, setChartData] = useState(null);
+
+  // Helper to resolve student roll_no to student Name
+  const getStudentDisplayName = (rollNo) => {
+    const s = students.find((st) => st.roll_no === rollNo);
+    return s && s.name ? s.name : rollNo;
+  };
+
+  const totalPossiblePairs = students.length >= 2
+    ? Math.round((students.length * (students.length - 1)) / 2)
+    : 0;
 
   // Train and Score single run
   const handleTrainAndScore = async () => {
@@ -145,8 +155,8 @@ export default function RiskModelTab() {
           {
             label: 'High-Risk Student Pairs Flagged',
             data: counts,
-            backgroundColor: 'rgba(99, 102, 241, 0.75)', // Indigo-500
-            borderColor: 'rgb(79, 70, 229)',             // Indigo-600
+            backgroundColor: 'rgba(99, 102, 241, 0.75)',
+            borderColor: 'rgb(79, 70, 229)',
             borderWidth: 1,
             borderRadius: 6,
           },
@@ -188,6 +198,41 @@ export default function RiskModelTab() {
     }
   };
 
+  // Feature Importance Chart Data
+  const importanceChartData = results?.feature_importances ? {
+    labels: [
+      'Past incidents together',
+      'Roll-number closeness',
+      'Academic similarity',
+      'Shared classes',
+    ],
+    datasets: [
+      {
+        label: 'Importance (%)',
+        data: [
+          Number(((results.feature_importances.past_incidents_together || 0) * 100).toFixed(1)),
+          Number(((results.feature_importances.roll_number_proximity || 0) * 100).toFixed(1)),
+          Number(((results.feature_importances.academic_similarity_score || 0) * 100).toFixed(1)),
+          Number(((results.feature_importances.shared_classes_count || 0) * 100).toFixed(1)),
+        ],
+        backgroundColor: [
+          'rgba(239, 68, 68, 0.75)',   // Red
+          'rgba(16, 185, 129, 0.75)',  // Emerald
+          'rgba(245, 158, 11, 0.75)',  // Amber
+          'rgba(99, 102, 241, 0.75)',  // Indigo
+        ],
+        borderColor: [
+          'rgb(239, 68, 68)',
+          'rgb(16, 185, 129)',
+          'rgb(245, 158, 11)',
+          'rgb(99, 102, 241)',
+        ],
+        borderWidth: 1,
+        borderRadius: 4,
+      },
+    ],
+  } : null;
+
   if (!activeRoom) {
     return (
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-8 text-center">
@@ -196,42 +241,195 @@ export default function RiskModelTab() {
           Please select or create an active room in the <strong>Setup</strong> tab first.
         </p>
       </div>
+                
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* ML Model Overview Card */}
+      {/* 1. MODEL OVERVIEW & HONESTY NOTE */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
             <div className="flex items-center gap-2">
-              <span className="bg-indigo-600 text-white text-[10px] font-bold uppercase px-2 py-0.5 rounded">
-                Supervised ML
+              <span className="bg-indigo-600 text-white text-[10px] font-bold uppercase px-2 py-0.5 rounded tracking-wide">
+                PAIR RISK ESTIMATOR
               </span>
               <h2 className="text-base font-bold text-slate-900">
-                Random Forest Pairwise Conflict Classifier
+                Random Forest Pair Risk Estimator
               </h2>
             </div>
+                
             <p className="text-xs text-slate-500 mt-1">
-              Evaluates past cheating history, shared courses, and academic grade similarity across student pairs.
+              Estimates which pairs of students are riskier to seat close together. It learns from practice data, so it gives a hint, not proof.
             </p>
           </div>
+                
 
           <div className="text-xs bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg text-slate-600 font-medium">
-            Cohort: <strong className="text-indigo-600 font-mono">{students.length}</strong> enrolled students
+            Cohort: <strong className="text-indigo-600 font-mono">{students.length}</strong> students, <strong className="text-indigo-600 font-mono">{totalPossiblePairs}</strong> possible pairs
           </div>
+                
         </div>
+                
 
-        {/* Sliders & Parameters */}
+        {/* Permanent Honesty Note */}
+        <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center gap-2.5 font-medium">
+          <span className="text-base leading-none">⚠️</span>
+          <span>
+            <strong>Demo only:</strong> trained on simulated data. Scores are a seating hint, not evidence of cheating.
+          </span>
+        </div>
+                
+
+        {/* 2. "HOW IT WORKS" STRIP (Three small numbered cards) */}
+        <div className="space-y-2 pt-1">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+            How It Works
+          </div>
+                
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Card 1 */}
+            <div className="p-3.5 bg-slate-50/80 border border-slate-200/80 rounded-xl space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
+                  1
+                </span>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Create practice examples
+                </h4>
+              </div>
+                
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Simulated student pairs with different risk levels.
+              </p>
+            </div>
+                
+
+            {/* Card 2 */}
+            <div className="p-3.5 bg-slate-50/80 border border-slate-200/80 rounded-xl space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
+                  2
+                </span>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Train a Random Forest
+                </h4>
+              </div>
+                
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Many small decision trees that each vote on whether a pair is risky.
+              </p>
+            </div>
+                
+
+            {/* Card 3 */}
+            <div className="p-3.5 bg-slate-50/80 border border-slate-200/80 rounded-xl space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
+                  3
+                </span>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Score your room
+                </h4>
+              </div>
+                
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Every possible pair of students gets a risk score between 0 and 1.
+              </p>
+            </div>
+                
+          </div>
+                
+        </div>
+                
+
+        {/* 3. "WHERE THE INPUTS COME FROM" TABLE (Always visible) */}
+        <div className="pt-2">
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-200/70">
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                <span>📋</span>
+                <span>Where the inputs come from</span>
+              </h4>
+              <span className="text-[11px] text-slate-400">
+                Data origin per feature
+              </span>
+            </div>
+                
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200/60 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="py-1.5 px-2.5">Input Feature</th>
+                    <th className="py-1.5 px-2.5 w-28">Source</th>
+                    <th className="py-1.5 px-2.5">Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  <tr>
+                    <td className="py-2 px-2.5 font-semibold text-slate-800">Roll-number closeness</td>
+                    <td className="py-2 px-2.5">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        ✓ Real
+                      </span>
+                    </td>
+                    <td className="py-2 px-2.5 text-slate-600 text-[11px]">from the department rosters</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-2.5 font-semibold text-slate-800">Past incidents together</td>
+                    <td className="py-2 px-2.5">
+                      {results?.feature_sources?.past_incidents_together === 'partial' || pairFeatures.length > 0 || evidenceUsedCount > 0 ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-300">
+                          ◐ Partial
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          ~ Simulated
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-2.5 text-slate-600 text-[11px]">Real only for pairs you enter as evidence</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-2.5 font-semibold text-slate-800">Academic similarity</td>
+                    <td className="py-2 px-2.5">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        ~ Simulated
+                      </span>
+                    </td>
+                    <td className="py-2 px-2.5 text-slate-600 text-[11px]">Simulated baseline values (0.0 to 1.0)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-2.5 font-semibold text-slate-800">Shared classes</td>
+                    <td className="py-2 px-2.5">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        ~ Simulated
+                      </span>
+                    </td>
+                    <td className="py-2 px-2.5 text-slate-600 text-[11px]">Simulated course overlap (0 to 5)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+                
+          </div>
+                
+        </div>
+                
+
+        {/* SLIDERS & PARAMETERS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          {/* Threshold Slider */}
           <div>
             <div className="flex justify-between items-center mb-1">
               <label className="text-xs font-semibold text-slate-700 uppercase">
-                Risk Classification Threshold (θ)
+                How cautious should it be?
               </label>
               <span className="font-mono font-bold text-indigo-600 text-sm">{threshold}</span>
             </div>
+                
             <input
               type="range"
               min="0.50"
@@ -241,20 +439,26 @@ export default function RiskModelTab() {
               onChange={(e) => setThreshold(parseFloat(e.target.value))}
               className="w-full accent-indigo-600 cursor-pointer"
             />
-            <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-              <span>0.50 (Strict / Flag More)</span>
-              <span>0.75 (Balanced)</span>
-              <span>0.95 (Conservative / Flag Confident)</span>
+            <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-medium">
+              <span>Flag more pairs</span>
+              <span>Flag only the surest pairs</span>
             </div>
+                
+            <p className="text-[11px] text-slate-500 mt-1.5 leading-normal">
+              A lower value flags more pairs; a higher value flags only the ones it is most sure about.
+            </p>
           </div>
+                
 
+          {/* Training Samples */}
           <div>
             <div className="flex justify-between items-center mb-1">
               <label className="text-xs font-semibold text-slate-700 uppercase">
-                Synthetic Training Samples
+                Practice examples to learn from
               </label>
               <span className="font-mono font-bold text-slate-800 text-sm">{numPairs} pairs</span>
             </div>
+                
             <input
               type="number"
               min="100"
@@ -264,11 +468,13 @@ export default function RiskModelTab() {
               onChange={(e) => setNumPairs(parseInt(e.target.value, 10))}
               className="w-full text-sm border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
             />
-            <p className="text-[10px] text-slate-400 mt-1">
-              Number of synthetic feature vectors generated in-memory to train the Random Forest.
+            <p className="text-[11px] text-slate-500 mt-1.5 leading-normal">
+              Simulated pairs the model studies before scoring your room.
             </p>
           </div>
+                
         </div>
+                
 
         {/* Real Roster Toggle Checkbox */}
         <div className="flex items-center gap-3 p-3 bg-indigo-50/60 border border-indigo-100 rounded-lg">
@@ -280,9 +486,10 @@ export default function RiskModelTab() {
             className="h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
           />
           <label htmlFor="useRealRosterCheckbox" className="text-xs text-slate-700 font-medium cursor-pointer">
-            <span className="font-bold text-indigo-900">Incorporate Real Institutional Roster CSV</span> (<code className="text-indigo-600 font-mono">students_anonymized.csv</code>) for authentic Roll Number Proximity calculation
+            <span className="font-bold text-indigo-900">Use department rosters for roll-number proximity</span>
           </label>
         </div>
+                
 
         {/* Known Conflict Evidence (Optional) — Collapsible */}
         <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -300,12 +507,14 @@ export default function RiskModelTab() {
                 </span>
               )}
             </div>
-            <span className="text-[10px] text-slate-400 font-medium hidden sm:block">Override simulated features for specific pairs</span>
+                
+            <span className="text-[10px] text-slate-400 font-medium hidden sm:block">Tell the model about pairs you already know are risky.</span>
           </button>
 
           {evidenceExpanded && (
             <div className="p-4 bg-white border-t border-slate-200 space-y-4">
               <p className="text-[11px] text-slate-500 leading-relaxed">
+                Tell the model about pairs you already know are risky.
                 By default, past incidents and academic similarity are simulated since no real data exists.
                 If you have specific real evidence for a pair (e.g. documented prior incidents), add it here
                 to override the simulation for that pair only.
@@ -331,6 +540,7 @@ export default function RiskModelTab() {
                       ))}
                   </select>
                 </div>
+                
 
                 {/* Student B */}
                 <div>
@@ -350,6 +560,7 @@ export default function RiskModelTab() {
                       ))}
                   </select>
                 </div>
+                
 
                 {/* Past Incidents Together */}
                 <div>
@@ -366,6 +577,7 @@ export default function RiskModelTab() {
                     className="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-violet-500 font-mono"
                   />
                 </div>
+                
 
                 {/* Academic Similarity Score */}
                 <div>
@@ -373,6 +585,7 @@ export default function RiskModelTab() {
                     <label className="text-[10px] font-semibold text-slate-600 uppercase">Similarity</label>
                     <span className="text-[10px] font-mono font-bold text-violet-600">{evidenceForm.academicSimilarity.toFixed(2)}</span>
                   </div>
+                
                   <input
                     type="range"
                     min="0"
@@ -386,8 +599,11 @@ export default function RiskModelTab() {
                     <span>0.00</span>
                     <span>1.00</span>
                   </div>
+                
                 </div>
+                
               </div>
+                
 
               {/* Add Evidence Button */}
               <button
@@ -401,7 +617,6 @@ export default function RiskModelTab() {
                     setAlertInfo({ type: 'warning', message: 'Student A and Student B must be different.' });
                     return;
                   }
-                  // Check for duplicate pair (either order)
                   const isDuplicate = pairFeatures.some(
                     (pf) =>
                       (pf.studentA === evidenceForm.studentA && pf.studentB === evidenceForm.studentB) ||
@@ -441,12 +656,16 @@ export default function RiskModelTab() {
                         ✕
                       </button>
                     </div>
+                
                   ))}
                 </div>
+                
               )}
             </div>
+                
           )}
         </div>
+                
 
         <button
           onClick={handleTrainAndScore}
@@ -456,6 +675,7 @@ export default function RiskModelTab() {
           {loading ? 'Training & Scoring Cohort...' : 'Train & Score Active Cohort'}
         </button>
       </div>
+                
 
       {alertInfo && (
         <Alert
@@ -465,7 +685,7 @@ export default function RiskModelTab() {
         />
       )}
 
-      {/* FEATURE PROVENANCE MATRIX */}
+      {/* FEATURE PROVENANCE MATRIX (Dynamic per response) */}
       {results && results.feature_sources && (
         <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs space-y-2">
           <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -481,6 +701,7 @@ export default function RiskModelTab() {
               Data origin per ML feature
             </span>
           </div>
+                
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
             {Object.entries(results.feature_sources)
               .filter(([feat]) => !feat.startsWith('_'))
@@ -505,173 +726,233 @@ export default function RiskModelTab() {
                         : '~ Simulated'}
                     </span>
                   </div>
+                
                 );
               })}
           </div>
+                
         </div>
+                
       )}
 
-      {/* CRITICAL ML HONESTY WARNING BANNER (Differentiated per feature provenance) */}
+      {/* 5. INFERENCE RESULTS & FEATURE IMPORTANCE */}
       {results && (
-        results.feature_sources?.roll_number_proximity === 'real' ? (
-          <div className="p-4 bg-emerald-50/80 border-2 border-emerald-300 rounded-xl shadow-xs">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl text-emerald-600">ℹ️</span>
-              <div>
-                <h3 className="text-sm font-bold text-emerald-900 uppercase tracking-wide">
-                  Hybrid Real/Baseline Feature Architecture
-                </h3>
-                <p className="text-xs text-emerald-800 mt-1">
-                  <strong>roll_number_proximity</strong> is calculated directly from <strong>REAL institutional USN roster data</strong> (<code className="font-mono">students_anonymized.csv</code>).
-                  Because historical cheating records and transcript similarities are not accessible, disciplinary incidents and academic similarity use baseline neutral/simulated values.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : results.features_simulated ? (
-          <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl shadow-xs">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl text-amber-600">⚠️</span>
-              <div>
-                <h3 className="text-sm font-bold text-amber-900 uppercase tracking-wide">
-                  These results use simulated data, not real student relationships
-                </h3>
-                <p className="text-xs text-amber-800 mt-1">
-                  Because real disciplinary records and transcript similarities were not supplied via a production SIS database,
-                  the inference engine generated random synthetic feature vectors for candidate pairs.
-                  This demonstration illustrates the mathematical integration between ML probability thresholds and CSP solver constraints.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null
-      )}
-
-      {/* INFERENCE RESULTS & SENSITIVITY CHART */}
-      {results && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Flagged Pairs Card */}
-          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">High-Risk Pairs Flagged</h3>
-                <p className="text-xs text-slate-500">
-                  Pairs with predicted cheating probability P(conflict) ≥ {results.threshold}
-                </p>
-              </div>
-              <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                {results.count} {results.count === 1 ? 'Pair' : 'Pairs'}
+        <div className="space-y-6">
+          {/* Plain-Language Caption Banner Above Results */}
+          <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-semibold text-indigo-950 flex items-center justify-between gap-2 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="text-base leading-none">📊</span>
+              <span>
+                <strong>Higher score = riskier to sit close together.</strong> Pairs with risk score ≥ {results.threshold} are flagged below.
               </span>
             </div>
-
-            {results.high_risk_pairs.length === 0 ? (
-              <div className="text-center py-10 border border-dashed rounded-lg text-slate-400 text-xs">
-                No high-risk pairs detected at threshold θ = {results.threshold}.
-                <br />
-                Try lowering the threshold slider (e.g. to 0.50 or 0.60) to see lenient boundaries.
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
-                {results.high_risk_pairs.map((pair, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50/70 hover:bg-slate-50 transition-colors text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-rose-700 bg-rose-100/70 px-2 py-0.5 rounded">
-                        {pair.student_a}
-                      </span>
-                      <span className="text-slate-400 font-bold">⟷</span>
-                      <span className="font-mono font-bold text-rose-700 bg-rose-100/70 px-2 py-0.5 rounded">
-                        {pair.student_b}
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={() => handleAddToConflictConstraints(pair)}
-                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-white border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded shadow-2xs cursor-pointer transition-colors"
-                      title="Enforce in backtracking CSP solver"
-                    >
-                      + Add to Room Constraints
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+                
+            <span className="text-[11px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold whitespace-nowrap">
+              Threshold: {results.threshold}
+            </span>
           </div>
+                
 
-          {/* Chart.js Bar Chart: Threshold Trade-off */}
-          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Threshold Trade-off Analysis</h3>
-                <p className="text-xs text-slate-500">
-                  Visualizes how changing the probability cutoff θ impacts flagged conflict counts.
-                </p>
-              </div>
-              {sensitivityLoading && (
-                <span className="text-[11px] text-indigo-600 font-medium animate-pulse">
-                  Evaluating...
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Flagged Pairs Card (Sorted Riskiest First: "Name A - Name B: 0.82") */}
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">High-Risk Pairs Flagged</h3>
+                  <p className="text-xs text-slate-500">
+                    Sorted by predicted risk score (highest risk first).
+                  </p>
+                </div>
+                
+                <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                  {results.count} {results.count === 1 ? 'Pair' : 'Pairs'}
                 </span>
+              </div>
+                
+
+              {results.high_risk_pairs.length === 0 ? (
+                <div className="text-center py-10 border border-dashed rounded-lg text-slate-400 text-xs">
+                  No high-risk pairs detected at threshold {results.threshold}.
+                  <br />
+                  Try lowering the threshold slider (e.g. to 0.50 or 0.60) to see more candidate pairs.
+                </div>
+                
+              ) : (
+                <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                  {results.high_risk_pairs.map((pair, idx) => {
+                    const nameA = getStudentDisplayName(pair.student_a);
+                    const nameB = getStudentDisplayName(pair.student_b);
+                    const score = pair.score !== undefined ? pair.score : results.threshold;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50/70 hover:bg-slate-50 transition-colors text-xs gap-2"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                            <span>{nameA}</span>
+                            <span className="text-slate-400 font-normal">-</span>
+                            <span>{nameB}:</span>
+                            <span className="font-mono font-extrabold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                              {Number(score).toFixed(2)}
+                            </span>
+                          </div>
+                
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {pair.student_a} ⟷ {pair.student_b}
+                          </div>
+                
+                        </div>
+                
+
+                        <button
+                          onClick={() => handleAddToConflictConstraints(pair)}
+                          className="self-start sm:self-auto text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-white border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded shadow-2xs cursor-pointer transition-colors whitespace-nowrap"
+                          title="Enforce in backtracking CSP solver"
+                        >
+                          + Add to Room Constraints
+                        </button>
+                      </div>
+                
+                    );
+                  })}
+                </div>
+                
               )}
             </div>
+                
 
-            {chartData ? (
-              <div className="h-[280px] flex items-center justify-center">
-                <Bar
-                  data={chartData}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                      legend: {
-                        display: false,
-                      },
-                      tooltip: {
-                        callbacks: {
-                          label: (ctx) => ` Flagged Pairs: ${ctx.parsed.y}`,
-                        },
-                      },
-                    },
-                    scales: {
-                      y: {
-                        beginAtZero: true,
-                        ticks: {
-                          precision: 0,
-                          font: { size: 11 },
-                        },
-                        title: {
-                          display: true,
-                          text: 'Flagged Pairs Count',
-                          font: { size: 11, weight: 'bold' },
-                        },
-                      },
-                      x: {
-                        ticks: {
-                          font: { size: 11 },
-                        },
-                        title: {
-                          display: true,
-                          text: 'Probability Threshold (θ)',
-                          font: { size: 11, weight: 'bold' },
-                        },
-                      },
-                    },
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="text-center py-16 text-xs text-slate-400">
-                Sensitivity trade-off plot will render after scoring.
-              </div>
-            )}
+            {/* Right Column: "What mattered most" Feature Importance Bar Chart */}
+            <div className="space-y-6">
+              {/* Feature Importance Bar Chart */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">What mattered most</h3>
+                    <p className="text-xs text-slate-500">
+                      Shows how much each feature influenced the model's risk decisions.
+                    </p>
+                  </div>
+                
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">
+                    Feature Weights
+                  </span>
+                </div>
+                
 
-            <div className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded border border-slate-100">
-              <strong>Viva Explanation:</strong> A lower θ (e.g. 0.50) casts a wider net but risks false positives (over-constraining the CSP solver). A higher θ (e.g. 0.90) minimizes false positives, leaving more permutation freedom for room seating.
+                {importanceChartData ? (
+                  <div className="h-[220px]">
+                    <Bar
+                      data={importanceChartData}
+                      options={{
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          legend: { display: false },
+                          tooltip: {
+                            callbacks: {
+                              label: (ctx) => ` Influence: ${ctx.parsed.x.toFixed(1)}%`,
+                            },
+                          },
+                        },
+                        scales: {
+                          x: {
+                            beginAtZero: true,
+                            ticks: {
+                              callback: (v) => `${v}%`,
+                              font: { size: 10 },
+                            },
+                            title: {
+                              display: true,
+                              text: 'Relative Influence (%)',
+                              font: { size: 10, weight: 'bold' },
+                            },
+                          },
+                          y: {
+                            ticks: {
+                              font: { size: 11, weight: '600' },
+                            },
+                          },
+                        },
+                      }}
+                    />
+                  </div>
+                
+                ) : (
+                  <div className="text-center py-12 text-xs text-slate-400">
+                    Feature importance plot will render after training.
+                  </div>
+                
+                )}
+                <p className="mt-2 text-xs text-slate-500">These weights show how the practice data was generated, not a real-world finding about students.</p>
+              </div>
+
+              {/* Sensitivity Trade-off Analysis */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Threshold Trade-off Analysis</h3>
+                    <p className="text-xs text-slate-500">
+                      How changing the cautiousness threshold impacts flagged conflict counts.
+                    </p>
+                  </div>
+                
+                  {sensitivityLoading && (
+                    <span className="text-[11px] text-indigo-600 font-medium animate-pulse">
+                      Evaluating...
+                    </span>
+                  )}
+                </div>
+                
+
+                {chartData ? (
+                  <div className="h-[200px]">
+                    <Bar
+                      data={chartData}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          legend: { display: false },
+                          tooltip: {
+                            callbacks: {
+                              label: (ctx) => ` Flagged Pairs: ${ctx.parsed.y}`,
+                            },
+                          },
+                        },
+                        scales: {
+                          y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0, font: { size: 10 } },
+                            title: { display: true, text: 'Flagged Pairs Count', font: { size: 10, weight: 'bold' } },
+                          },
+                          x: {
+                            ticks: { font: { size: 10 } },
+                            title: { display: true, text: 'Cautiousness Threshold (θ)', font: { size: 10, weight: 'bold' } },
+                          },
+                        },
+                      }}
+                    />
+                  </div>
+                
+                ) : (
+                  <div className="text-center py-10 text-xs text-slate-400">
+                    Sensitivity plot will render after scoring.
+                  </div>
+                
+                )}
+              </div>
+                
             </div>
+                
           </div>
+                
         </div>
+                
       )}
     </div>
+                
   );
 }
